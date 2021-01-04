@@ -1,0 +1,270 @@
+{
+  "$schema": "https://schema.management.azure.com/schemas/2019-04-01/deploymentTemplate.json#",
+  "contentVersion": "1.0.0.1",
+  "parameters": {
+
+    //GLOBAL
+    "afraTagging": {
+      "type": "object",
+      "defaultValue": {
+        "Agency": "",
+        "Cost Center": "",
+        "Department": "",
+        "OpCo": "",
+        "Project": "",
+        "Request Item": "",
+        "Resource Group": "",
+        "SN Environment": "",
+        "Tag Set": "manual tagging",
+        "Time to Live": ""
+      }
+    },
+
+    // CD
+    "serverfarmName": {
+      "type": "string"
+    },
+    "siteName": {
+      "type": "string"
+    },
+    "serverFarmSkuCode": {
+      "type": "string"
+    },
+
+    // CD SETTINGS
+    "siteComposerExtension": {
+      "type": "bool",
+      "defaultValue": false
+    },
+    "siteDefaultPhysicalPath": {
+      "type": "string",
+      "defaultValue": "site\\wwwroot"
+    },
+    "phpVersion": {
+      "type": "string",
+      "defaultValue": "7.2"
+    },
+    "Http20Enabled": {
+      "type": "string",
+      "defaultValue": true
+    },
+
+    //APPLICATION INSIGHTS
+    "appInsName": {
+      "type": "string"
+    },
+    "appInsType": {
+      "type": "string",
+      "defaultValue": "web"
+    },
+
+    //AUTOSCALING
+    "autoscaleSettingsName": {
+      "type": "string"
+    },
+    "autoscaleSettingsMinimum": {
+      "type": "int",
+      "defaultValue": 1
+    },
+    "autoscaleSettingsMaximum": {
+      "type": "int",
+      "defaultValue": 4
+    },
+    "autoscaleSettingsDefault": {
+      "type": "int",
+      "defaultValue": 1
+    }
+  },
+  "variables": {
+
+  },
+  "resources": [
+
+    // CD
+    {
+      "apiVersion": "2016-09-01",
+      "name": "[parameters('serverfarmName')]",
+      "type": "Microsoft.Web/serverfarms",
+      "location": "[resourceGroup().location]",
+      "tags": "[parameters('afraTagging')]",
+      "properties": {
+        "name": "[parameters('serverfarmName')]",
+        "numberOfWorkers": 1
+      },
+      "sku": {
+        "name": "[parameters('serverFarmSkuCode')]",
+        "size": "[parameters('serverFarmSkuCode')]"
+      }
+    },
+    {
+      "apiVersion": "2016-08-01",
+      "name": "[parameters('siteName')]",
+      "type": "Microsoft.Web/sites",
+      "location": "[resourceGroup().location]",
+      "dependsOn": [
+        "[concat('Microsoft.Web/serverfarms/', parameters('serverfarmName'))]"
+      ],
+      "tags": "[parameters('afraTagging')]",
+      "properties": {
+        "name": "[parameters('siteName')]",
+        "serverFarmId": "[concat(resourceGroup().id, '/providers/Microsoft.Web/serverfarms/', parameters('serverfarmName'))]",
+        "siteConfig": {
+          "alwaysOn": "[not(or(equals(first(parameters('serverFarmSkuCode')), 'F'), equals(first(parameters('serverFarmSkuCode')), 'D')))]",
+          "requestTracingEnabled": true,
+          "requestTracingExpirationTime": "9999-12-31T23:59:00Z",
+          "httpLoggingEnabled": true,
+          "logsDirectorySizeLimit": 100,
+          "detailedErrorLoggingEnabled": true,
+          "minTlsVersion": "1.2",
+          "use32BitWorkerProcess": false,
+          "phpVersion": "[parameters('phpVersion')]",
+          "http20Enabled": "[parameters('Http20Enabled')]",
+          "numberOfWorkers": 1,
+          "virtualApplications": [
+            {
+              "virtualPath": "/",
+              "physicalPath": "[parameters('siteDefaultPhysicalPath')]"
+            }
+          ],
+          "appSettings": [
+            {
+              "name": "APPINSIGHTS_INSTRUMENTATIONKEY",
+              "value": "[reference(concat('Microsoft.Insights/components/', parameters('appInsName')), '2015-05-01').InstrumentationKey]"
+            },
+            {
+              "name": "ApplicationInsightsAgent_EXTENSION_VERSION",
+              "value": "~2"
+            },
+            {
+              "name": "InstrumentationEngine_EXTENSION_VERSION",
+              "value": "~1"
+            }
+          ],
+          "connectionStrings": [
+          ]
+        }
+      },
+      "resources": [
+        {
+          "apiVersion": "2016-08-01",
+          "name": "logs",
+          "type": "config",
+          "location": "[resourceGroup().location]",
+          "dependsOn": [
+            "[resourceId('Microsoft.Web/sites', parameters('siteName'))]"
+          ],
+          "properties": {
+            "httpLogs": {
+              "fileSystem": {
+                "retentionInDays": 90,
+                "enabled": true
+              }
+            }
+          }
+        },
+        {
+          "condition": "[parameters('siteComposerExtension')]",
+          "name": "ComposerExtension",
+          "type": "siteextensions",
+          "apiVersion": "2016-08-01",
+          "location": "[resourceGroup().location]",
+          "dependsOn": [
+            "[resourceId('Microsoft.Web/sites', parameters('siteName'))]"
+          ],
+          "properties": {
+            "id": "ComposerExtension"
+          }
+        }
+      ]
+    },
+
+    //APPLICATION INSIGHTS
+    {
+      "name": "[parameters('appInsName')]",
+      "type": "Microsoft.Insights/components",
+      "apiVersion": "2015-05-01",
+      "kind": "web",
+      "location": "[resourceGroup().location]",
+      "properties": {
+        "ApplicationId": "[parameters('appInsName')]",
+        "Application_Type": "[parameters('appInsType')]",
+        "Flow_Type": "Bluefield",
+        "Request_Source": "rest"
+      },
+      "tags": {
+        "displayName": "applicationInsights"
+      }
+    },
+
+    // AUTOSCALING
+    {
+      "type": "Microsoft.Insights/autoscalesettings",
+      "name": "[parameters('autoscalesettingsName')]",
+      "apiVersion": "2014-04-01",
+      "location": "[resourceGroup().location]",
+      "tags": {
+      },
+      "scale": null,
+      "properties": {
+        "profiles": [
+          {
+            "name": "Auto created scale condition",
+            "capacity": {
+              "minimum": "[parameters('autoscalesettingsMinimum')]",
+              "maximum": "[parameters('autoscalesettingsMaximum')]",
+              "default": "[parameters('autoscalesettingsDefault')]"
+            },
+            "rules": [
+              {
+                "metricTrigger": {
+                  "metricName": "CpuPercentage",
+                  "metricNamespace": "",
+                  "metricResourceUri": "[resourceId('Microsoft.Web/serverfarms', parameters('serverfarmName'))]",
+                  "timeGrain": "PT1M",
+                  "statistic": "Average",
+                  "timeWindow": "PT5M",
+                  "timeAggregation": "Average",
+                  "operator": "GreaterThan",
+                  "threshold": 80
+                },
+                "scaleAction": {
+                  "direction": "Increase",
+                  "type": "ChangeCount",
+                  "value": 1,
+                  "cooldown": "PT10M"
+                }
+              },
+              {
+                "metricTrigger": {
+                  "metricName": "CpuPercentage",
+                  "metricNamespace": "",
+                  "metricResourceUri": "[resourceId('Microsoft.Web/serverfarms', parameters('serverfarmName'))]",
+                  "timeGrain": "PT1M",
+                  "statistic": "Average",
+                  "timeWindow": "PT15M",
+                  "timeAggregation": "Average",
+                  "operator": "LessThan",
+                  "threshold": 50
+                },
+                "scaleAction": {
+                  "direction": "Decrease",
+                  "type": "ChangeCount",
+                  "value": 1,
+                  "cooldown": "PT20M"
+                }
+              }
+            ]
+          }
+        ],
+        "enabled": true,
+        "name": "[parameters('autoscalesettingsName')]",
+        "targetResourceUri": "[resourceId('Microsoft.Web/serverfarms', parameters('serverfarmName'))]"
+      },
+      "dependsOn": [
+        "[resourceId('Microsoft.Web/serverfarms', parameters('serverfarmName'))]"
+      ]
+    }
+  ],
+  "outputs": {
+  }
+}
